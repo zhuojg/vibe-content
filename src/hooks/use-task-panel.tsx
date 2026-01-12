@@ -12,8 +12,8 @@ import {
 } from "react";
 import type { TaskStatus } from "@/components/kanban/status-selector";
 import { useChatStream } from "@/hooks/use-chat-stream";
-import { orpc } from "@/orpc/client";
 import { generateUUID } from "@/lib/utils";
+import { orpc } from "@/orpc/client";
 
 export type AgentType = string;
 

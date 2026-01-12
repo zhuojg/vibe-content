@@ -5,6 +5,7 @@ import { DefaultChatTransport } from "ai";
 import {
   ArrowLeft,
   ArrowRight,
+  Inbox,
   Loader2,
   MessageSquare,
   Plus,
@@ -12,11 +13,20 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatContainer } from "@/components/chat/chat-container";
+import { InboxPanel } from "@/components/inbox/inbox-panel";
 import { KanbanBoard } from "@/components/kanban/kanban-board";
 import type { TaskStatus } from "@/components/kanban/status-selector";
 import { TaskDetailPanel } from "@/components/kanban/task-detail-panel";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { TaskPanelProvider, useTaskPanel } from "@/hooks/use-task-panel";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+import { useInboxPanel } from "@/hooks/use-inbox-panel";
+import { ProjectLayoutProvider } from "@/hooks/use-project-layout";
+import { useTaskPanel } from "@/hooks/use-task-panel";
 import {
   useDataStreamHandler,
   useToolUIMessageStore,
@@ -30,15 +40,31 @@ export const Route = createFileRoute("/project/$projectId")({
 
 function ProjectPage() {
   const { projectId } = Route.useParams();
+  const [projectChatOpen, setProjectChatOpen] = useState(false);
 
   return (
-    <TaskPanelProvider projectId={projectId}>
-      <ProjectPageContent />
-    </TaskPanelProvider>
+    <ProjectLayoutProvider
+      projectId={projectId}
+      projectChatOpen={projectChatOpen}
+      setProjectChatOpen={setProjectChatOpen}
+    >
+      <ProjectPageContent
+        projectChatOpen={projectChatOpen}
+        setProjectChatOpen={setProjectChatOpen}
+      />
+    </ProjectLayoutProvider>
   );
 }
 
-function ProjectPageContent() {
+interface ProjectPageContentProps {
+  projectChatOpen: boolean;
+  setProjectChatOpen: (open: boolean) => void;
+}
+
+function ProjectPageContent({
+  projectChatOpen,
+  setProjectChatOpen,
+}: ProjectPageContentProps) {
   const { projectId } = Route.useParams();
   const queryClient = useQueryClient();
   const [isAddingTask, setIsAddingTask] = useState(false);
@@ -47,8 +73,14 @@ function ProjectPageContent() {
   // Get task panel context
   const { selectedTaskId, selectTask } = useTaskPanel();
 
+  // Get inbox panel context
+  const {
+    isOpen: inboxOpen,
+    togglePanel: toggleInbox,
+    pendingCount,
+  } = useInboxPanel();
+
   // Project chat state
-  const [projectChatOpen, setProjectChatOpen] = useState(false);
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
 
   // Data stream state for subagent message handling
@@ -404,8 +436,10 @@ function ProjectPageContent() {
     );
   }
 
-  // Active view - Kanban board
+  // Determine if we have any right panel open
+  const hasRightPanel = selectedTaskId || projectChatOpen;
 
+  // Active view - Kanban board with resizable panels
   return (
     <div className="flex h-screen flex-col">
       <header className="flex items-center gap-4 border-b border-border p-4">
@@ -418,84 +452,146 @@ function ProjectPageContent() {
           <h1 className="text-lg font-medium">{project?.name}</h1>
           <p className="text-sm text-muted-foreground">{tasks.length} tasks</p>
         </div>
-        <Button variant="outline" onClick={handleOpenProjectChat}>
-          <MessageSquare className="mr-2 size-4" />
-          Project Chat
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant={inboxOpen ? "default" : "outline"}
+            size="sm"
+            onClick={toggleInbox}
+            className="relative"
+          >
+            <Inbox className="mr-2 size-4" />
+            Inbox
+            {pendingCount > 0 && (
+              <Badge
+                variant="destructive"
+                className="ml-2 size-5 rounded-full p-0 text-xs"
+              >
+                {pendingCount}
+              </Badge>
+            )}
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleOpenProjectChat}>
+            <MessageSquare className="mr-2 size-4" />
+            Project Chat
+          </Button>
+        </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
-        <div className="flex-1 overflow-hidden">
-          <KanbanBoard
-            tasks={tasks.map((t) => ({
-              ...t,
-              status: t.status as TaskStatus,
-            }))}
-            onTaskClick={handleTaskClick}
-            onTaskStatusChange={handleTaskStatusChange}
-            onAddTask={handleAddTask}
-          />
-        </div>
-
-        {selectedTaskId && !projectChatOpen && <TaskDetailPanel />}
-
-        {/* Project Chat Panel - inline side panel (50% width) */}
-        {projectChatOpen && (
-          <div className="flex h-full w-1/2 flex-shrink-0 flex-col border-l border-border bg-background animate-in slide-in-from-right duration-300">
-            <div className="flex items-center justify-between border-b border-border p-4">
-              <h2 className="text-lg font-medium">Project Chat</h2>
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                onClick={handleCloseProjectChat}
-              >
-                <X className="size-4" />
-              </Button>
-            </div>
-
-            {/* Session selector */}
-            {projectChats.length > 0 && (
-              <div className="flex flex-wrap gap-2 border-b border-border p-2">
-                {projectChats.map((chatSession) => (
-                  <Button
-                    key={chatSession.id}
-                    variant={
-                      selectedChatId === chatSession.id ? "default" : "outline"
-                    }
-                    size="sm"
-                    onClick={() => {
-                      setSelectedChatId(chatSession.id);
-                      setProjectChatMessages([]);
-                    }}
-                  >
-                    {chatSession.title}
-                  </Button>
-                ))}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleCreateNewSession}
-                  disabled={createChatSessionMutation.isPending}
-                >
-                  <Plus className="mr-1 size-4" />
-                  New Session
-                </Button>
-              </div>
-            )}
-
-            <div className="flex-1 overflow-hidden">
-              <ChatContainer
-                messages={projectChatMessages}
-                onSendMessage={(content) =>
-                  sendProjectMessage({ text: content })
-                }
-                isLoading={isProjectChatLoading}
-                placeholder="Chat about your project..."
-              />
-            </div>
-          </div>
+      <ResizablePanelGroup direction="horizontal" className="flex-1">
+        {/* Left: Inbox (collapsible) */}
+        {inboxOpen && (
+          <>
+            <ResizablePanel
+              defaultSize={25}
+              minSize={15}
+              maxSize={40}
+              className="min-w-0"
+            >
+              <InboxPanel />
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+          </>
         )}
-      </div>
+
+        {/* Center: Kanban (always visible) */}
+        <ResizablePanel defaultSize={hasRightPanel ? 50 : 75} minSize={30}>
+          <div className="h-full overflow-hidden">
+            <KanbanBoard
+              tasks={tasks.map((t) => ({
+                ...t,
+                status: t.status as TaskStatus,
+              }))}
+              onTaskClick={handleTaskClick}
+              onTaskStatusChange={handleTaskStatusChange}
+              onAddTask={handleAddTask}
+            />
+          </div>
+        </ResizablePanel>
+
+        {/* Right: Task Detail Panel (collapsible) */}
+        {selectedTaskId && !projectChatOpen && (
+          <>
+            <ResizableHandle withHandle />
+            <ResizablePanel
+              defaultSize={25}
+              minSize={15}
+              maxSize={50}
+              className="min-w-0"
+            >
+              <TaskDetailPanel />
+            </ResizablePanel>
+          </>
+        )}
+
+        {/* Right: Project Chat Panel (collapsible) */}
+        {projectChatOpen && (
+          <>
+            <ResizableHandle withHandle />
+            <ResizablePanel
+              defaultSize={35}
+              minSize={20}
+              maxSize={50}
+              className="min-w-0"
+            >
+              <div className="flex h-full flex-col border-l border-border bg-background">
+                <div className="flex items-center justify-between border-b border-border p-4">
+                  <h2 className="text-lg font-medium">Project Chat</h2>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    onClick={handleCloseProjectChat}
+                  >
+                    <X className="size-4" />
+                  </Button>
+                </div>
+
+                {/* Session selector */}
+                {projectChats.length > 0 && (
+                  <div className="flex flex-wrap gap-2 border-b border-border p-2">
+                    {projectChats.map((chatSession) => (
+                      <Button
+                        key={chatSession.id}
+                        variant={
+                          selectedChatId === chatSession.id
+                            ? "default"
+                            : "outline"
+                        }
+                        size="sm"
+                        onClick={() => {
+                          setSelectedChatId(chatSession.id);
+                          setProjectChatMessages([]);
+                        }}
+                      >
+                        {chatSession.title}
+                      </Button>
+                    ))}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleCreateNewSession}
+                      disabled={createChatSessionMutation.isPending}
+                    >
+                      <Plus className="mr-1 size-4" />
+                      New Session
+                    </Button>
+                  </div>
+                )}
+
+                <div className="flex-1 overflow-hidden">
+                  <ChatContainer
+                    messages={projectChatMessages}
+                    onSendMessage={(content) =>
+                      sendProjectMessage({ text: content })
+                    }
+                    isLoading={isProjectChatLoading}
+                    placeholder="Chat about your project..."
+                  />
+                </div>
+              </div>
+            </ResizablePanel>
+          </>
+        )}
+      </ResizablePanelGroup>
 
       {isAddingTask && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">

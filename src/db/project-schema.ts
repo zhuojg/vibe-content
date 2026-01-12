@@ -168,3 +168,74 @@ export const messageRelations = relations(message, ({ one }) => ({
     references: [chat.id],
   }),
 }));
+
+// Inbox Message enums
+export const inboxMessageTypeEnum = pgEnum("inbox_message_type", [
+  "task_suggestion",
+  "completion_review",
+]);
+
+export const inboxMessageStatusEnum = pgEnum("inbox_message_status", [
+  "pending",
+  "accepted",
+  "rejected",
+  "dismissed",
+]);
+
+// Suggested task data type
+type SuggestedTaskData = {
+  title: string;
+  description?: string;
+  assignedAgent?: string;
+};
+
+// Review data type
+type ReviewData = {
+  output: string;
+  agentType: string;
+};
+
+// Inbox Message table
+export const inboxMessage = pgTable(
+  "inbox_message",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    type: inboxMessageTypeEnum("type").notNull(),
+    status: inboxMessageStatusEnum("status").default("pending").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    taskId: text("task_id").references(() => task.id, { onDelete: "set null" }),
+    suggestedTaskData: json("suggested_task_data").$type<SuggestedTaskData>(),
+    reviewData: json("review_data").$type<ReviewData>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+    resolvedAt: timestamp("resolved_at"),
+  },
+  (table) => [
+    index("inbox_message_projectId_idx").on(table.projectId),
+    index("inbox_message_status_idx").on(table.status),
+  ],
+);
+
+// Inbox Message relations
+export const inboxMessageRelations = relations(inboxMessage, ({ one }) => ({
+  project: one(project, {
+    fields: [inboxMessage.projectId],
+    references: [project.id],
+  }),
+  task: one(task, {
+    fields: [inboxMessage.taskId],
+    references: [task.id],
+  }),
+}));
+
+// Update project relations to include inbox messages
+export const projectInboxRelation = relations(project, ({ many }) => ({
+  inboxMessages: many(inboxMessage),
+}));

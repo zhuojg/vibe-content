@@ -2,8 +2,8 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { project, task } from "@/db/schema";
-import { publicProcedure } from "..";
 import { generateUUID } from "@/lib/utils";
+import { publicProcedure } from "..";
 
 // Mock task templates based on project type
 const taskTemplates = [

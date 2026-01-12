@@ -2,8 +2,8 @@ import { asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { task } from "@/db/schema";
-import { publicProcedure } from "@/orpc";
 import { generateUUID } from "@/lib/utils";
+import { publicProcedure } from "@/orpc";
 
 const taskStatusSchema = z.enum([
   "todo",

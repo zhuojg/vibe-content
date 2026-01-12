@@ -8,9 +8,9 @@ import {
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { chat } from "@/db/schema";
+import { generateUUID } from "../utils";
 import { subscribeAbortSignal } from "./abort-handler";
 import { getStreamContext } from "./stream-context";
-import { generateUUID } from "../utils";
 
 type ToUIStreamOptions = {
   chatId: string;
