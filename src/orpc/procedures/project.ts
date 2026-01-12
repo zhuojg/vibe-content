@@ -1,8 +1,9 @@
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { chatMessage, project } from "@/db/schema";
+import { project } from "@/db/schema";
 import { publicProcedure } from "@/orpc";
+import { generateUUID } from "@/lib/utils";
 
 const projectStatusSchema = z.enum([
   "clarifying",
@@ -14,11 +15,30 @@ const projectStatusSchema = z.enum([
 export const createProject = publicProcedure
   .input(z.object({ name: z.string().min(1) }))
   .handler(async ({ input }) => {
-    const id = crypto.randomUUID();
+    const id = generateUUID();
     const [newProject] = await db
       .insert(project)
       .values({
         id,
+        name: input.name,
+        status: "clarifying",
+      })
+      .returning();
+    return newProject;
+  });
+
+export const createProjectOptimistic = publicProcedure
+  .input(
+    z.object({
+      id: z.string(),
+      name: z.string().min(1).default("New Project"),
+    }),
+  )
+  .handler(async ({ input }) => {
+    const [newProject] = await db
+      .insert(project)
+      .values({
+        id: input.id,
         name: input.name,
         status: "clarifying",
       })
@@ -61,13 +81,4 @@ export const updateProjectStatus = publicProcedure
       throw errors.NOT_FOUND({ data: { resource: "project" } });
     }
     return updated;
-  });
-
-export const getProjectMessages = publicProcedure
-  .input(z.object({ projectId: z.string() }))
-  .handler(async ({ input }) => {
-    return db.query.chatMessage.findMany({
-      where: eq(chatMessage.projectId, input.projectId),
-      orderBy: chatMessage.createdAt,
-    });
   });

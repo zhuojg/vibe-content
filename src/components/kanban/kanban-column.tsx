@@ -31,7 +31,7 @@ export function KanbanColumn({
   const config = statusConfig[status];
 
   return (
-    <div className="flex h-full w-64 flex-shrink-0 flex-col border border-border">
+    <div className="flex h-full flex-col border border-border">
       <div className="flex items-center justify-between border-b border-border p-3">
         <div className="flex items-center gap-2">
           <div className={cn("size-2 rounded-full", config.color)} />

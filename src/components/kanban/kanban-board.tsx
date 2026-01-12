@@ -40,7 +40,7 @@ export function KanbanBoard({
   );
 
   return (
-    <div className="flex h-full gap-4 overflow-x-auto p-4">
+    <div className="grid h-full grid-cols-5 gap-4 p-4">
       {columns.map((status) => (
         <KanbanColumn
           key={status}

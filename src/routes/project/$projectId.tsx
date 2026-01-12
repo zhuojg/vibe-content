@@ -1,17 +1,27 @@
-"use client";
-
+import { useChat } from "@ai-sdk/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import type { UIMessage } from "ai";
-import { ArrowLeft, Plus } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { DefaultChatTransport } from "ai";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Loader2,
+  MessageSquare,
+  Plus,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChatContainer } from "@/components/chat/chat-container";
 import { KanbanBoard } from "@/components/kanban/kanban-board";
 import type { TaskStatus } from "@/components/kanban/status-selector";
-import {
-  type AgentType,
-  TaskDetailModal,
-} from "@/components/kanban/task-detail-modal";
+import { TaskDetailPanel } from "@/components/kanban/task-detail-panel";
 import { Button } from "@/components/ui/button";
+import { TaskPanelProvider, useTaskPanel } from "@/hooks/use-task-panel";
+import {
+  useDataStreamHandler,
+  useToolUIMessageStore,
+} from "@/lib/data-stream-handler";
+import { useInitialChatStore } from "@/lib/stores/initial-chat-store";
 import { client, orpc } from "@/orpc/client";
 
 export const Route = createFileRoute("/project/$projectId")({
@@ -20,14 +30,34 @@ export const Route = createFileRoute("/project/$projectId")({
 
 function ProjectPage() {
   const { projectId } = Route.useParams();
+
+  return (
+    <TaskPanelProvider projectId={projectId}>
+      <ProjectPageContent />
+    </TaskPanelProvider>
+  );
+}
+
+function ProjectPageContent() {
+  const { projectId } = Route.useParams();
   const queryClient = useQueryClient();
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [isAddingTask, setIsAddingTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
-  const [taskActionLoading, setTaskActionLoading] = useState(false);
 
-  // Track which tasks have already been auto-progressed to prevent duplicates
-  const autoProgressedTasksRef = useRef<Set<string>>(new Set());
+  // Get task panel context
+  const { selectedTaskId, selectTask } = useTaskPanel();
+
+  // Project chat state
+  const [projectChatOpen, setProjectChatOpen] = useState(false);
+  const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
+
+  // Data stream state for subagent message handling
+  // biome-ignore lint/suspicious/noExplicitAny: DataUIPart requires custom type
+  const [dataStream, setDataStream] = useState<any[]>([]);
+  const { clearMessages } = useToolUIMessageStore();
+
+  // Process data stream for subagent messages
+  useDataStreamHandler(dataStream);
 
   const projectQuery = useQuery(
     orpc.project.getProject.queryOptions({ input: { projectId } }),
@@ -37,26 +67,15 @@ function ProjectPage() {
     orpc.task.getTasksByProject.queryOptions({ input: { projectId } }),
   );
 
-  const taskMessagesQuery = useQuery({
-    ...orpc.task.getTaskMessages.queryOptions({
-      input: { taskId: selectedTaskId ?? "" },
-    }),
-    enabled: !!selectedTaskId,
-  });
-
   const tasks = tasksQuery.data ?? [];
-  const selectedTask = tasks.find((t) => t.id === selectedTaskId);
-  const taskMessages: UIMessage[] = (taskMessagesQuery.data ?? []).map(
-    (m) => m.message as UIMessage,
-  );
 
-  const invalidateTasks = () => {
+  const invalidateTasks = useCallback(() => {
     queryClient.invalidateQueries({
       queryKey: orpc.task.getTasksByProject.queryOptions({
         input: { projectId },
       }).queryKey,
     });
-  };
+  }, [queryClient, projectId]);
 
   const updateStatusMutation = useMutation({
     mutationFn: ({ taskId, status }: { taskId: string; status: TaskStatus }) =>
@@ -73,47 +92,146 @@ function ProjectPage() {
     },
   });
 
-  const sendTaskMessageMutation = useMutation({
-    mutationFn: (content: string) =>
-      client.chat.sendTaskMessage({ taskId: selectedTaskId!, content }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: orpc.task.getTaskMessages.queryOptions({
-          input: { taskId: selectedTaskId! },
-        }).queryKey,
-      });
+  // Query chat sessions for project
+  const projectChatsQuery = useQuery({
+    ...orpc.chat.listProjectChats.queryOptions({ input: { projectId } }),
+    enabled: projectChatOpen,
+  });
+  const projectChats = projectChatsQuery.data ?? [];
+
+  // Query existing messages for selected project chat
+  const projectChatMessagesQuery = useQuery({
+    ...orpc.chat.getProjectMessages.queryOptions({
+      input: {
+        projectId,
+        chatId: selectedChatId ?? undefined,
+      },
+    }),
+    enabled: projectChatOpen && !!selectedChatId,
+  });
+
+  // Query existing messages for clarifying chat (when project is in clarifying state)
+  const clarifyingMessagesQuery = useQuery({
+    ...orpc.chat.getProjectMessages.queryOptions({
+      input: { projectId },
+    }),
+    enabled: !!projectId,
+  });
+
+  const createChatSessionMutation = useMutation(
+    orpc.chat.createProjectChatSession.mutationOptions(),
+  );
+
+  // Generate initial tasks mutation
+  const generateTasksMutation = useMutation(
+    orpc.agent.generateInitialTasks.mutationOptions(),
+  );
+
+  // Project chat with useChat hook
+  const {
+    messages: projectChatMessages,
+    sendMessage: sendProjectMessage,
+    status: projectChatStatus,
+    setMessages: setProjectChatMessages,
+  } = useChat({
+    id: selectedChatId ?? `project-${projectId}`,
+    transport: new DefaultChatTransport({
+      api: "/api/agent",
+      prepareSendMessagesRequest({ messages }) {
+        return {
+          body: {
+            type: "project",
+            projectId,
+            chatId: selectedChatId ?? undefined,
+            messages,
+          },
+        };
+      },
+      prepareReconnectToStreamRequest: selectedChatId
+        ? () => ({
+            api: `/api/agent/${selectedChatId}/stream`,
+          })
+        : undefined,
+    }),
+    onData: (dataPart) => {
+      setDataStream((ds) => [...ds, dataPart]);
     },
   });
 
-  // New mutations for task workflow
-  const assignAgentMutation = useMutation({
-    mutationFn: ({
-      taskId,
-      agentType,
-      description,
-    }: {
-      taskId: string;
-      agentType: string;
-      description?: string;
-    }) => client.task.assignAgentAndStart({ taskId, agentType, description }),
-    onSuccess: invalidateTasks,
+  // Clarifying chat hook - used for new project intent confirmation
+  const {
+    messages: clarifyingMessages,
+    sendMessage: sendClarifyingMessage,
+    status: clarifyingChatStatus,
+    setMessages: setClarifyingMessages,
+  } = useChat({
+    id: `clarify-${projectId}`,
+    transport: new DefaultChatTransport({
+      api: "/api/agent",
+      prepareSendMessagesRequest({ messages }) {
+        return {
+          body: {
+            type: "project",
+            projectId,
+            messages,
+          },
+        };
+      },
+      // No reconnect for clarifying chat since we don't have a stable chatId
+    }),
   });
 
-  const completeProcessingMutation = useMutation({
-    mutationFn: (taskId: string) => client.task.completeProcessing({ taskId }),
-    onSuccess: invalidateTasks,
-  });
+  const isClarifyingChatLoading =
+    clarifyingChatStatus === "streaming" ||
+    clarifyingChatStatus === "submitted";
 
-  const approveTaskMutation = useMutation({
-    mutationFn: (taskId: string) => client.task.approveTask({ taskId }),
-    onSuccess: invalidateTasks,
-  });
+  // Consume initial message from Zustand store (set by homepage on project creation)
+  const consumeInitialChat = useInitialChatStore((s) => s.consumeInitialChat);
+  const initialMessageSent = useRef(false);
 
-  const rejectTaskMutation = useMutation({
-    mutationFn: ({ taskId, comment }: { taskId: string; comment: string }) =>
-      client.task.rejectTask({ taskId, comment }),
-    onSuccess: invalidateTasks,
-  });
+  // Auto-send initial message on mount if present in store
+  useEffect(() => {
+    if (initialMessageSent.current) return;
+    const initialChat = consumeInitialChat();
+    if (initialChat && initialChat.projectId === projectId) {
+      initialMessageSent.current = true;
+      sendClarifyingMessage({ text: initialChat.message });
+    }
+  }, [projectId, consumeInitialChat, sendClarifyingMessage]);
+
+  // Load existing clarifying messages when returning to a clarifying project
+  useEffect(() => {
+    if (
+      clarifyingMessagesQuery.data &&
+      clarifyingMessagesQuery.data.length > 0
+    ) {
+      setClarifyingMessages(clarifyingMessagesQuery.data);
+    }
+  }, [clarifyingMessagesQuery.data, setClarifyingMessages]);
+
+  // Load existing project chat messages when selecting a chat
+  useEffect(() => {
+    if (
+      projectChatMessagesQuery.data &&
+      projectChatMessagesQuery.data.length > 0
+    ) {
+      setProjectChatMessages(projectChatMessagesQuery.data);
+    }
+  }, [projectChatMessagesQuery.data, setProjectChatMessages]);
+
+  // Clear data stream and store when chat session changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally clear when chat changes
+  useEffect(() => {
+    clearMessages();
+    setDataStream([]);
+  }, [selectedChatId, clearMessages]);
+
+  // Auto-select first chat session when opening project chat
+  useEffect(() => {
+    if (projectChatOpen && projectChats.length > 0 && !selectedChatId) {
+      setSelectedChatId(projectChats[0].id);
+    }
+  }, [projectChatOpen, projectChats, selectedChatId]);
 
   const handleTaskStatusChange = (taskId: string, status: TaskStatus) => {
     updateStatusMutation.mutate({ taskId, status });
@@ -129,99 +247,164 @@ function ProjectPage() {
     }
   };
 
-  const handleSendTaskMessage = async (content: string) => {
-    setTaskActionLoading(true);
-    try {
-      await sendTaskMessageMutation.mutateAsync(content);
-    } finally {
-      setTaskActionLoading(false);
-    }
-  };
-
-  const handleAssignAndStart = async (
-    agentType: AgentType,
-    description?: string,
-  ) => {
-    if (!selectedTaskId) return;
-    setTaskActionLoading(true);
-    try {
-      await assignAgentMutation.mutateAsync({
-        taskId: selectedTaskId,
-        agentType,
-        description,
-      });
-    } finally {
-      setTaskActionLoading(false);
-    }
-  };
-
-  const handleApprove = async () => {
-    if (!selectedTaskId) return;
-    setTaskActionLoading(true);
-    try {
-      await approveTaskMutation.mutateAsync(selectedTaskId);
-      setSelectedTaskId(null);
-    } finally {
-      setTaskActionLoading(false);
-    }
-  };
-
-  const handleReject = async (comment: string) => {
-    if (!selectedTaskId) return;
-    setTaskActionLoading(true);
-    try {
-      await rejectTaskMutation.mutateAsync({
-        taskId: selectedTaskId,
-        comment,
-      });
-    } finally {
-      setTaskActionLoading(false);
-    }
-  };
-
-  // Auto-progress logic for tasks in "processing" status ONLY
-  // (removed auto-progress for in_review - user must approve/reject)
-  const autoProgressTask = useCallback(
-    async (taskId: string) => {
-      // Check if already being processed
-      if (autoProgressedTasksRef.current.has(taskId)) return;
-
-      const task = tasks.find((t) => t.id === taskId);
-      if (!task || task.status !== "processing") return;
-
-      // Mark as being processed
-      autoProgressedTasksRef.current.add(taskId);
-
-      setTimeout(() => {
-        completeProcessingMutation.mutate(taskId, {
-          onSettled: () => {
-            // Remove from set after mutation completes
-            autoProgressedTasksRef.current.delete(taskId);
-          },
-        });
-      }, 3000);
-    },
-    [tasks, completeProcessingMutation],
-  );
-
-  // Watch for status changes to trigger auto-progress (processing only)
-  useEffect(() => {
-    tasks.forEach((task) => {
-      if (task.status === "processing") {
-        autoProgressTask(task.id);
-      }
+  const handleCreateNewSession = async () => {
+    const newSession = await createChatSessionMutation.mutateAsync({
+      projectId,
     });
-  }, [tasks, autoProgressTask]);
+    setSelectedChatId(newSession.id);
+    setProjectChatMessages([]);
+    queryClient.invalidateQueries({
+      queryKey: orpc.chat.listProjectChats.queryOptions({
+        input: { projectId },
+      }).queryKey,
+    });
+  };
 
-  if (projectQuery.isLoading) {
+  const handleOpenProjectChat = () => {
+    // Mutual exclusion: close task panel when opening project chat
+    selectTask(null);
+    setProjectChatOpen(true);
+    // Reset selected chat to trigger auto-select
+    setSelectedChatId(null);
+    setProjectChatMessages([]);
+  };
+
+  const handleCloseProjectChat = () => {
+    setProjectChatOpen(false);
+  };
+
+  // Handle task click with mutual exclusion
+  const handleTaskClick = (taskId: string) => {
+    // Close project chat when selecting a task
+    setProjectChatOpen(false);
+    selectTask(taskId);
+  };
+
+  // Determine view mode based on project status
+  const project = projectQuery.data;
+  const viewMode = useMemo(() => {
+    // Still loading project data
+    if (projectQuery.isLoading) return "loading";
+    // No project found (error case)
+    if (!project) return "loading";
+    // Project is in clarifying state
+    if (project.status === "clarifying") return "clarifying";
+    // Tasks are being generated
+    if (generateTasksMutation.isPending) return "generating";
+    // Normal kanban view
+    return "active";
+  }, [project, projectQuery.isLoading, generateTasksMutation.isPending]);
+
+  const isProjectChatLoading =
+    projectChatStatus === "streaming" || projectChatStatus === "submitted";
+
+  // Show "Go to Kanban" when project is clarifying and has enough conversation
+  const showGoToKanban =
+    viewMode === "clarifying" && clarifyingMessages.length >= 2;
+
+  // Handler to transition from clarifying to active
+  const handleGoToKanban = async () => {
+    if (!projectId) return;
+    // Generate tasks and update project status
+    await generateTasksMutation.mutateAsync({ projectId });
+    // Invalidate queries to refresh data
+    queryClient.invalidateQueries({
+      queryKey: orpc.project.getProject.queryOptions({ input: { projectId } })
+        .queryKey,
+    });
+    queryClient.invalidateQueries({
+      queryKey: orpc.task.getTasksByProject.queryOptions({
+        input: { projectId },
+      }).queryKey,
+    });
+  };
+
+  // Loading view
+  if (viewMode === "loading") {
     return (
       <div className="flex h-screen items-center justify-center">
-        <p className="text-muted-foreground">Loading project...</p>
+        <Loader2 className="size-6 animate-spin text-muted-foreground" />
+        <p className="ml-2 text-muted-foreground">Loading project...</p>
       </div>
     );
   }
 
-  const project = projectQuery.data;
+  // Clarifying view - full-width chat for intent confirmation
+  if (viewMode === "clarifying") {
+    return (
+      <div className="flex h-screen flex-col">
+        <header className="flex items-center gap-4 border-b border-border p-4">
+          <Link to="/">
+            <Button size="icon-sm" variant="ghost">
+              <ArrowLeft className="size-4" />
+            </Button>
+          </Link>
+          <div className="flex-1">
+            <h1 className="text-lg font-medium">
+              {project?.name ?? "New Project"}
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Tell me about your project
+            </p>
+          </div>
+        </header>
+
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <div className="flex-1 overflow-hidden">
+            <ChatContainer
+              messages={clarifyingMessages}
+              onSendMessage={(content) =>
+                sendClarifyingMessage({ text: content })
+              }
+              isLoading={isClarifyingChatLoading}
+              placeholder="Describe your project..."
+            />
+          </div>
+
+          {showGoToKanban && (
+            <div className="border-t border-border p-4">
+              <Button
+                onClick={handleGoToKanban}
+                disabled={
+                  isClarifyingChatLoading || generateTasksMutation.isPending
+                }
+                className="w-full"
+              >
+                {generateTasksMutation.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 size-4 animate-spin" />
+                    Generating tasks...
+                  </>
+                ) : (
+                  <>
+                    Go to Kanban Board
+                    <ArrowRight className="ml-2 size-4" />
+                  </>
+                )}
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Generating view - show loading while tasks are being generated
+  if (viewMode === "generating") {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center">
+        <Loader2 className="size-8 animate-spin text-muted-foreground" />
+        <p className="mt-4 text-lg text-muted-foreground">
+          Generating tasks...
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Setting up your project board
+        </p>
+      </div>
+    );
+  }
+
+  // Active view - Kanban board
 
   return (
     <div className="flex h-screen flex-col">
@@ -231,22 +414,87 @@ function ProjectPage() {
             <ArrowLeft className="size-4" />
           </Button>
         </Link>
-        <div>
+        <div className="flex-1">
           <h1 className="text-lg font-medium">{project?.name}</h1>
           <p className="text-sm text-muted-foreground">{tasks.length} tasks</p>
         </div>
+        <Button variant="outline" onClick={handleOpenProjectChat}>
+          <MessageSquare className="mr-2 size-4" />
+          Project Chat
+        </Button>
       </header>
 
-      <div className="flex-1 overflow-hidden">
-        <KanbanBoard
-          tasks={tasks.map((t) => ({
-            ...t,
-            status: t.status as TaskStatus,
-          }))}
-          onTaskClick={setSelectedTaskId}
-          onTaskStatusChange={handleTaskStatusChange}
-          onAddTask={handleAddTask}
-        />
+      <div className="flex flex-1 overflow-hidden">
+        <div className="flex-1 overflow-hidden">
+          <KanbanBoard
+            tasks={tasks.map((t) => ({
+              ...t,
+              status: t.status as TaskStatus,
+            }))}
+            onTaskClick={handleTaskClick}
+            onTaskStatusChange={handleTaskStatusChange}
+            onAddTask={handleAddTask}
+          />
+        </div>
+
+        {selectedTaskId && !projectChatOpen && <TaskDetailPanel />}
+
+        {/* Project Chat Panel - inline side panel (50% width) */}
+        {projectChatOpen && (
+          <div className="flex h-full w-1/2 flex-shrink-0 flex-col border-l border-border bg-background animate-in slide-in-from-right duration-300">
+            <div className="flex items-center justify-between border-b border-border p-4">
+              <h2 className="text-lg font-medium">Project Chat</h2>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                onClick={handleCloseProjectChat}
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+
+            {/* Session selector */}
+            {projectChats.length > 0 && (
+              <div className="flex flex-wrap gap-2 border-b border-border p-2">
+                {projectChats.map((chatSession) => (
+                  <Button
+                    key={chatSession.id}
+                    variant={
+                      selectedChatId === chatSession.id ? "default" : "outline"
+                    }
+                    size="sm"
+                    onClick={() => {
+                      setSelectedChatId(chatSession.id);
+                      setProjectChatMessages([]);
+                    }}
+                  >
+                    {chatSession.title}
+                  </Button>
+                ))}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCreateNewSession}
+                  disabled={createChatSessionMutation.isPending}
+                >
+                  <Plus className="mr-1 size-4" />
+                  New Session
+                </Button>
+              </div>
+            )}
+
+            <div className="flex-1 overflow-hidden">
+              <ChatContainer
+                messages={projectChatMessages}
+                onSendMessage={(content) =>
+                  sendProjectMessage({ text: content })
+                }
+                isLoading={isProjectChatLoading}
+                placeholder="Chat about your project..."
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {isAddingTask && (
@@ -291,25 +539,6 @@ function ProjectPage() {
             </div>
           </div>
         </div>
-      )}
-
-      {selectedTask && (
-        <TaskDetailModal
-          task={{
-            ...selectedTask,
-            status: selectedTask.status as TaskStatus,
-            assignedAgent: selectedTask.assignedAgent as AgentType | null,
-            output: selectedTask.output,
-            reviewComment: selectedTask.reviewComment,
-          }}
-          messages={taskMessages}
-          isLoading={taskActionLoading}
-          onClose={() => setSelectedTaskId(null)}
-          onSendMessage={handleSendTaskMessage}
-          onAssignAndStart={handleAssignAndStart}
-          onApprove={handleApprove}
-          onReject={handleReject}
-        />
       )}
     </div>
   );

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { project, task } from "@/db/schema";
 import { publicProcedure } from "..";
+import { generateUUID } from "@/lib/utils";
 
 // Mock task templates based on project type
 const taskTemplates = [
@@ -49,7 +50,7 @@ export const generateInitialTasks = publicProcedure
     const createdTasks = [];
     for (let i = 0; i < taskTemplates.length; i++) {
       const template = taskTemplates[i];
-      const id = crypto.randomUUID();
+      const id = generateUUID();
       const order = (Date.now() + i).toString();
 
       const [newTask] = await db
