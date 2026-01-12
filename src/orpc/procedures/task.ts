@@ -1,8 +1,9 @@
 import { asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { chatMessage, task } from "@/db/schema";
+import { task } from "@/db/schema";
 import { publicProcedure } from "@/orpc";
+import { generateUUID } from "@/lib/utils";
 
 const taskStatusSchema = z.enum([
   "todo",
@@ -21,7 +22,7 @@ export const createTask = publicProcedure
     }),
   )
   .handler(async ({ input }) => {
-    const id = crypto.randomUUID();
+    const id = generateUUID();
     const order = Date.now().toString();
     const [newTask] = await db
       .insert(task)
@@ -103,15 +104,6 @@ export const deleteTask = publicProcedure
     return { success: true };
   });
 
-export const getTaskMessages = publicProcedure
-  .input(z.object({ taskId: z.string() }))
-  .handler(async ({ input }) => {
-    return db.query.chatMessage.findMany({
-      where: eq(chatMessage.taskId, input.taskId),
-      orderBy: chatMessage.createdAt,
-    });
-  });
-
 // Assign agent and start task (todo -> processing)
 export const assignAgentAndStart = publicProcedure
   .input(
@@ -142,110 +134,6 @@ export const assignAgentAndStart = publicProcedure
     if (!updated) {
       throw errors.NOT_FOUND({ data: { resource: "task" } });
     }
-    return updated;
-  });
-
-// Complete processing and generate mock output (processing -> in_review)
-export const completeProcessing = publicProcedure
-  .input(z.object({ taskId: z.string() }))
-  .handler(async ({ input, errors }) => {
-    // Get the task to generate contextual mock output
-    const existingTask = await db.query.task.findFirst({
-      where: eq(task.id, input.taskId),
-    });
-    if (!existingTask) {
-      throw errors.NOT_FOUND({ data: { resource: "task" } });
-    }
-
-    // Generate mock output based on agent type
-    const mockOutputs: Record<string, string> = {
-      developer: `## Implementation Complete
-
-I've completed the implementation for "${existingTask.title}".
-
-### Changes Made:
-- Created new component with proper TypeScript types
-- Added unit tests with 95% coverage
-- Updated documentation
-
-### Files Modified:
-- src/components/Feature.tsx (new)
-- src/tests/Feature.test.ts (new)
-- README.md (updated)
-
-Ready for review.`,
-      designer: `## Design Complete
-
-I've finished the design work for "${existingTask.title}".
-
-### Deliverables:
-- High-fidelity mockups (3 screens)
-- Design tokens exported
-- Component specifications documented
-
-### Design Decisions:
-- Used existing color palette for consistency
-- Added subtle animations for better UX
-- Mobile-first responsive approach
-
-Assets are ready for handoff.`,
-      researcher: `## Research Complete
-
-I've completed the research for "${existingTask.title}".
-
-### Key Findings:
-1. Market analysis shows 3 main competitors
-2. User interviews revealed pain points
-3. Technical feasibility confirmed
-
-### Recommendations:
-- Proceed with MVP approach
-- Focus on core feature set
-- Plan for iterative improvements
-
-Full report attached.`,
-      writer: `## Content Complete
-
-I've finished writing for "${existingTask.title}".
-
-### Deliverables:
-- Main content (1,500 words)
-- SEO-optimized meta descriptions
-- Social media snippets
-
-### Notes:
-- Tone matches brand guidelines
-- Includes 3 CTAs
-- Ready for editorial review`,
-      analyst: `## Analysis Complete
-
-I've completed the analysis for "${existingTask.title}".
-
-### Summary:
-- Processed 10,000 data points
-- Identified 5 key trends
-- Created visualization dashboard
-
-### Insights:
-1. 23% increase in user engagement
-2. Mobile traffic up 45%
-3. Conversion rate optimization opportunities
-
-Report and dashboard ready for review.`,
-    };
-
-    const agentType = existingTask.assignedAgent ?? "developer";
-    const output = mockOutputs[agentType] ?? mockOutputs.developer;
-
-    const [updated] = await db
-      .update(task)
-      .set({
-        status: "in_review",
-        output,
-      })
-      .where(eq(task.id, input.taskId))
-      .returning();
-
     return updated;
   });
 

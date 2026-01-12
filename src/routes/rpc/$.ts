@@ -22,7 +22,7 @@ export const Route = createFileRoute("/rpc/$")({
           }, // Provide initial context if needed
         });
 
-        return response ?? new Response("Not Found HHH", { status: 404 });
+        return response ?? new Response("Not Found", { status: 404 });
       },
     },
   },
