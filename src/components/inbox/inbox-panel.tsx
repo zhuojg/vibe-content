@@ -3,14 +3,16 @@
 import { Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useInboxPanel } from "@/hooks/use-inbox-panel";
+import { useTaskPanel } from "@/hooks/use-task-panel";
 import { InboxMessageDetail } from "./inbox-message-detail";
 import { InboxMessageList } from "./inbox-message-list";
 
-interface InboxPanelProps {
+type InboxPanelProps = {
   onClose?: () => void;
-}
+  hideHeader?: boolean;
+};
 
-export function InboxPanel({ onClose }: InboxPanelProps) {
+export function InboxPanel({ onClose, hideHeader }: InboxPanelProps) {
   const {
     selectedMessage,
     selectedMessageId,
@@ -24,6 +26,8 @@ export function InboxPanel({ onClose }: InboxPanelProps) {
     closePanel,
   } = useInboxPanel();
 
+  const { selectTask } = useTaskPanel();
+
   const handleClose = () => {
     if (onClose) {
       onClose();
@@ -35,12 +39,14 @@ export function InboxPanel({ onClose }: InboxPanelProps) {
   if (isLoading) {
     return (
       <div className="flex h-full flex-col bg-background">
-        <div className="flex items-center justify-between border-b border-border p-4">
-          <h2 className="text-lg font-medium">Inbox</h2>
-          <Button size="icon-sm" variant="ghost" onClick={handleClose}>
-            <X className="size-4" />
-          </Button>
-        </div>
+        {!hideHeader && (
+          <div className="flex items-center justify-between border-b border-border p-4">
+            <h2 className="text-lg font-medium">Inbox</h2>
+            <Button size="icon-sm" variant="ghost" onClick={handleClose}>
+              <X className="size-4" />
+            </Button>
+          </div>
+        )}
         <div className="flex flex-1 items-center justify-center">
           <Loader2 className="size-6 animate-spin text-muted-foreground" />
         </div>
@@ -58,6 +64,7 @@ export function InboxPanel({ onClose }: InboxPanelProps) {
           onAccept={(overrides) => acceptMessage(selectedMessage.id, overrides)}
           onReject={(comment) => rejectMessage(selectedMessage.id, comment)}
           onDismiss={() => dismissMessage(selectedMessage.id)}
+          onViewTask={selectTask}
         />
       </div>
     );
@@ -66,12 +73,14 @@ export function InboxPanel({ onClose }: InboxPanelProps) {
   // Show list view
   return (
     <div className="flex h-full flex-col bg-background">
-      <div className="flex items-center justify-between border-b border-border p-4">
-        <h2 className="text-lg font-medium">Inbox</h2>
-        <Button size="icon-sm" variant="ghost" onClick={handleClose}>
-          <X className="size-4" />
-        </Button>
-      </div>
+      {!hideHeader && (
+        <div className="flex items-center justify-between border-b border-border p-4">
+          <h2 className="text-lg font-medium">Inbox</h2>
+          <Button size="icon-sm" variant="ghost" onClick={handleClose}>
+            <X className="size-4" />
+          </Button>
+        </div>
+      )}
       <InboxMessageList
         pendingMessages={pendingMessages}
         resolvedMessages={resolvedMessages}

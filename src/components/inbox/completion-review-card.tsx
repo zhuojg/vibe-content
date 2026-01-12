@@ -1,7 +1,7 @@
 "use client";
 
 import { formatDistanceToNow } from "date-fns";
-import { Check, ClipboardList, Loader2, X } from "lucide-react";
+import { Check, ClipboardList, ExternalLink, Loader2, X } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 
@@ -25,6 +25,7 @@ interface CompletionReviewCardProps {
   status: "pending" | "accepted" | "rejected" | "dismissed";
   onApprove: () => Promise<void>;
   onReject: (comment?: string) => Promise<void>;
+  onViewTask?: (taskId: string) => void;
 }
 
 export function CompletionReviewCard({
@@ -36,6 +37,7 @@ export function CompletionReviewCard({
   status,
   onApprove,
   onReject,
+  onViewTask,
 }: CompletionReviewCardProps) {
   const [isApproving, setIsApproving] = useState(false);
   const [isRejecting, setIsRejecting] = useState(false);
@@ -92,7 +94,19 @@ export function CompletionReviewCard({
 
         {task && (
           <div className="mb-4 rounded-md border border-border bg-accent/30 p-3">
-            <h4 className="text-sm font-medium">Related Task</h4>
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-medium">Related Task</h4>
+              {onViewTask && (
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => onViewTask(task.id)}
+                >
+                  <ExternalLink className="mr-1 size-3" />
+                  View Task
+                </Button>
+              )}
+            </div>
             <p className="mt-1 text-sm">{task.title}</p>
             <p className="mt-0.5 text-xs text-muted-foreground capitalize">
               Status: {task.status.replace("_", " ")}

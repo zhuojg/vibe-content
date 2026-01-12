@@ -5,16 +5,18 @@ import { type KeyboardEvent, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-interface ChatInputProps {
+type ChatInputProps = {
   onSend: (message: string) => void;
   isLoading?: boolean;
   placeholder?: string;
-}
+  className?: string;
+};
 
 export function ChatInput({
   onSend,
   isLoading = false,
   placeholder = "Type a message...",
+  className,
 }: ChatInputProps) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -35,7 +37,7 @@ export function ChatInput({
   };
 
   return (
-    <div className="flex gap-2 border-t border-border p-4">
+    <div className={cn("flex gap-2 p-4", className)}>
       <textarea
         ref={textareaRef}
         value={value}

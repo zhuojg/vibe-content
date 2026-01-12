@@ -6,127 +6,107 @@ import {
   useCallback,
   useContext,
   useMemo,
+  useState,
 } from "react";
 import { InboxPanelProvider, useInboxPanel } from "./use-inbox-panel";
 import { TaskPanelProvider, useTaskPanel } from "./use-task-panel";
 
-interface ProjectLayoutContextValue {
-  // Panel visibility
-  inboxOpen: boolean;
-  taskPanelOpen: boolean;
-  projectChatOpen: boolean;
+type LeftSidebarTab = "inbox" | "chat";
 
-  // Derived state
-  hasOpenRightPanel: boolean;
-
-  // Inbox actions
-  toggleInbox: () => void;
-  openInbox: () => void;
-  closeInbox: () => void;
+type ProjectLayoutContextValue = {
+  // Left sidebar
+  leftSidebarOpen: boolean;
+  activeLeftTab: LeftSidebarTab;
+  toggleLeftSidebar: () => void;
+  openLeftSidebar: (tab?: LeftSidebarTab) => void;
+  closeLeftSidebar: () => void;
+  setActiveLeftTab: (tab: LeftSidebarTab) => void;
   inboxPendingCount: number;
 
-  // Task panel actions (proxied from TaskPanel context)
+  // Task panel
+  taskPanelOpen: boolean;
   selectTask: (taskId: string | null) => void;
   closeTaskPanel: () => void;
 
-  // Project chat actions
-  openProjectChat: () => void;
-  closeProjectChat: () => void;
-  setProjectChatOpen: (open: boolean) => void;
-}
+  // Derived state
+  hasOpenRightPanel: boolean;
+};
 
 const ProjectLayoutContext = createContext<ProjectLayoutContextValue | null>(
   null,
 );
 
-interface ProjectLayoutProviderInnerProps {
+type ProjectLayoutProviderInnerProps = {
   children: ReactNode;
-  projectChatOpen: boolean;
-  setProjectChatOpen: (open: boolean) => void;
-}
+};
 
 function ProjectLayoutProviderInner({
   children,
-  projectChatOpen,
-  setProjectChatOpen,
 }: ProjectLayoutProviderInnerProps) {
   const inbox = useInboxPanel();
   const taskPanel = useTaskPanel();
 
+  // Left sidebar state
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState(false);
+  const [activeLeftTab, setActiveLeftTab] = useState<LeftSidebarTab>("inbox");
+
   // Derived state
   const taskPanelOpen = taskPanel.selectedTaskId !== null;
-  const hasOpenRightPanel = taskPanelOpen || projectChatOpen;
+  const hasOpenRightPanel = taskPanelOpen;
 
-  // Inbox actions with mutual exclusion
-  const toggleInbox = useCallback(() => {
-    inbox.togglePanel();
-  }, [inbox]);
+  // Left sidebar actions
+  const toggleLeftSidebar = useCallback(() => {
+    setLeftSidebarOpen((prev) => !prev);
+  }, []);
 
-  const openInbox = useCallback(() => {
-    inbox.openPanel();
-  }, [inbox]);
+  const openLeftSidebar = useCallback((tab?: LeftSidebarTab) => {
+    setLeftSidebarOpen(true);
+    if (tab) {
+      setActiveLeftTab(tab);
+    }
+  }, []);
 
-  const closeInbox = useCallback(() => {
-    inbox.closePanel();
-  }, [inbox]);
+  const closeLeftSidebar = useCallback(() => {
+    setLeftSidebarOpen(false);
+  }, []);
 
-  // Task panel actions with mutual exclusion
+  // Task panel actions
   const selectTask = useCallback(
     (taskId: string | null) => {
-      if (taskId !== null) {
-        // Close project chat when selecting a task
-        setProjectChatOpen(false);
-      }
       taskPanel.selectTask(taskId);
     },
-    [taskPanel, setProjectChatOpen],
+    [taskPanel],
   );
 
   const closeTaskPanel = useCallback(() => {
     taskPanel.closePanel();
   }, [taskPanel]);
 
-  // Project chat actions with mutual exclusion
-  const openProjectChat = useCallback(() => {
-    // Close task panel when opening project chat
-    taskPanel.selectTask(null);
-    setProjectChatOpen(true);
-  }, [taskPanel, setProjectChatOpen]);
-
-  const closeProjectChat = useCallback(() => {
-    setProjectChatOpen(false);
-  }, [setProjectChatOpen]);
-
   const value: ProjectLayoutContextValue = useMemo(
     () => ({
-      inboxOpen: inbox.isOpen,
-      taskPanelOpen,
-      projectChatOpen,
-      hasOpenRightPanel,
-      toggleInbox,
-      openInbox,
-      closeInbox,
+      leftSidebarOpen,
+      activeLeftTab,
+      toggleLeftSidebar,
+      openLeftSidebar,
+      closeLeftSidebar,
+      setActiveLeftTab,
       inboxPendingCount: inbox.pendingCount,
+      taskPanelOpen,
       selectTask,
       closeTaskPanel,
-      openProjectChat,
-      closeProjectChat,
-      setProjectChatOpen,
+      hasOpenRightPanel,
     }),
     [
-      inbox.isOpen,
+      leftSidebarOpen,
+      activeLeftTab,
+      toggleLeftSidebar,
+      openLeftSidebar,
+      closeLeftSidebar,
       inbox.pendingCount,
       taskPanelOpen,
-      projectChatOpen,
-      hasOpenRightPanel,
-      toggleInbox,
-      openInbox,
-      closeInbox,
       selectTask,
       closeTaskPanel,
-      openProjectChat,
-      closeProjectChat,
-      setProjectChatOpen,
+      hasOpenRightPanel,
     ],
   );
 
@@ -137,28 +117,19 @@ function ProjectLayoutProviderInner({
   );
 }
 
-interface ProjectLayoutProviderProps {
+type ProjectLayoutProviderProps = {
   projectId: string;
   children: ReactNode;
-  projectChatOpen: boolean;
-  setProjectChatOpen: (open: boolean) => void;
-}
+};
 
 export function ProjectLayoutProvider({
   projectId,
   children,
-  projectChatOpen,
-  setProjectChatOpen,
 }: ProjectLayoutProviderProps) {
   return (
     <InboxPanelProvider projectId={projectId}>
       <TaskPanelProvider projectId={projectId}>
-        <ProjectLayoutProviderInner
-          projectChatOpen={projectChatOpen}
-          setProjectChatOpen={setProjectChatOpen}
-        >
-          {children}
-        </ProjectLayoutProviderInner>
+        <ProjectLayoutProviderInner>{children}</ProjectLayoutProviderInner>
       </TaskPanelProvider>
     </InboxPanelProvider>
   );

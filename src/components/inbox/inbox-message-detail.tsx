@@ -40,6 +40,7 @@ interface InboxMessageDetailProps {
   onAccept: (overrides?: Partial<SuggestedTaskData>) => Promise<void>;
   onReject: (comment?: string) => Promise<void>;
   onDismiss: () => Promise<void>;
+  onViewTask?: (taskId: string) => void;
 }
 
 export function InboxMessageDetail({
@@ -48,6 +49,7 @@ export function InboxMessageDetail({
   onAccept,
   onReject,
   onDismiss,
+  onViewTask,
 }: InboxMessageDetailProps) {
   return (
     <div className="flex h-full flex-col">
@@ -81,6 +83,7 @@ export function InboxMessageDetail({
             status={message.status}
             onApprove={() => onAccept()}
             onReject={onReject}
+            onViewTask={onViewTask}
           />
         )}
       </div>

@@ -65,6 +65,7 @@ export function StatusBadge({ status }: StatusBadgeProps) {
       className={cn(
         "inline-flex items-center gap-1.5 text-xs px-2 py-0.5",
         "text-white",
+        "whitespace-nowrap",
         config.color,
       )}
     >
