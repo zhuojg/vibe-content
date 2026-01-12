@@ -23,8 +23,8 @@ bun run db:migrate   # Run database migrations
 
 Full-stack TypeScript application using TanStack React Start:
 
-- **Frontend**: React 19, TanStack Router (file-based routing), TanStack Query
-- **Backend**: Nitro server, oRPC procedures, Drizzle ORM
+- **Frontend**: React 19, TanStack Start, TanStack Query
+- **Backend**: oRPC procedures, Drizzle ORM
 - **Database**: PostgreSQL
 - **AI**: Vercel AI SDK with custom agent framework
 
@@ -111,81 +111,22 @@ const createMutation = useMutation({
 });
 ```
 
-### Streaming with AI SDK
-
-```typescript
-import { useChat } from "@ai-sdk/react";
-import { eventIteratorToUnproxiedDataStream } from "@orpc/client";
-
-const { messages, sendMessage } = useChat({
-  transport: {
-    async sendMessages(options) {
-      const result = await client.chat.streamMessage(
-        { messages: options.messages },
-        { signal: options.abortSignal }
-      );
-      return eventIteratorToUnproxiedDataStream(result);
-    },
-    reconnectToStream() { throw new Error("Not supported"); },
-  },
-});
-```
-
 ## Agent System
 
 Agents are defined in markdown files with YAML frontmatter.
 
-### Agent Definition (`src/lib/agents/built-in/*.md`)
+### Agent Definition
 
-```markdown
----
-name: leading
-description: Project planning and task coordination agent
-mode: primary          # "primary" or "subagent"
-maxSteps: 20
-skills:
-  product-research: true
-  image-generation: false
----
+See example in `src/lib/agents/built-in/*.md`.
 
-You are a project planning assistant...
+### Skill Definition
 
-<workflow>
-1. Listen to user's project idea
-2. Ask clarifying questions
-3. Break down into tasks
-</workflow>
-```
-
-### Skill Definition (`src/lib/agents/skills/built-in/*/SKILL.md`)
-
-```markdown
----
-name: product-research
-description: Research consumer products...
----
-
-# Product Research
-
-## Parameters
-**Required:**
-- `productName`: Name of product
-- `category`: Product category
-
-**Optional:**
-- `market`: Target market (default: "global")
-
-## Execution
-Use the `skill-runner` tool:
-```json
-{ "skillName": "product-research", "params": { ... } }
-```
-```
+See example in `src/lib/agents/skills/built-in/*/SKILL.md`.
 
 ### Adding New Skills
 
 1. Create `src/lib/agents/skills/built-in/<skill-name>/SKILL.md`
-2. Add executor in `src/lib/agents/skills/executors/<skill-name>.ts`
+2. (Optional) Add executor in `src/lib/agents/skills/executors/<skill-name>.ts`
 3. Register in `src/lib/agents/skills/executors/index.ts`
 
 ## Testing with Chrome DevTools
@@ -250,3 +191,10 @@ Use Chrome DevTools MCP to:
 - **Database changes**: Modify schemas in `src/db/`, run `bun run db:generate && bun run db:migrate`
 
 For complex files or modules, consider adding a markdown file with the same name to explain the module's purpose and structure.
+
+## Preferred Code Pattern
+
+- Avoid the usage of `try / catch`, only add when necessary or at the top level. Prefer to use `neverthrow` to define functions that will throw error.
+- Avoid pass data through props in react. Try to use hooks or context when possible.
+- Avoid the usage of `useEffect` especially for data related operations.
+- Aovid the usage of `interface` in typescript, always use `type` when possible. And when edit the file that containing the `inferface`, try to update it to `type`.

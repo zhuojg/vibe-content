@@ -5,36 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1767959142331,
-      "tag": "0000_white_black_bolt",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1767962407382,
-      "tag": "0001_simple_epoch",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1767966331537,
-      "tag": "0002_natural_cloak",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1767971271330,
-      "tag": "0003_brave_trauma",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1768099800000,
-      "tag": "0004_add_chat_message_tables",
+      "when": 1768212604225,
+      "tag": "0000_rapid_kulan_gath",
       "breakpoints": true
     }
   ]

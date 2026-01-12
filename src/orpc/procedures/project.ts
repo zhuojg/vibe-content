@@ -2,8 +2,8 @@ import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { project } from "@/db/schema";
-import { publicProcedure } from "@/orpc";
 import { generateUUID } from "@/lib/utils";
+import { publicProcedure } from "@/orpc";
 
 const projectStatusSchema = z.enum([
   "clarifying",

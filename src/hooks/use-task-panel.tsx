@@ -1,19 +1,20 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { UIMessage } from "ai";
+import { useChat } from "@ai-sdk/react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { DefaultChatTransport, type UIMessage } from "ai";
 import {
   createContext,
   type ReactNode,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
 } from "react";
 import type { TaskStatus } from "@/components/kanban/status-selector";
-import { useChatStream } from "@/hooks/use-chat-stream";
-import { orpc } from "@/orpc/client";
 import { generateUUID } from "@/lib/utils";
+import { orpc } from "@/orpc/client";
 
 export type AgentType = string;
 
@@ -32,7 +33,6 @@ interface TaskPanelContextValue {
   selectedTaskId: string | null;
   selectedTask: Task | undefined;
   messages: UIMessage[];
-  streamingMessages: UIMessage[];
   isLoading: boolean;
   isStreaming: boolean;
 
@@ -40,7 +40,7 @@ interface TaskPanelContextValue {
   selectTask: (taskId: string | null) => void;
   closePanel: () => void;
   startTask: (agentType: AgentType, description?: string) => Promise<void>;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string) => void;
   abortStream: () => Promise<void>;
 }
 
@@ -77,7 +77,7 @@ export function TaskPanelProvider({
     };
   }, [tasks, selectedTaskId]);
 
-  // Query task messages
+  // Query task messages to get initial messages for useChat
   const taskMessagesQuery = useQuery({
     ...orpc.chat.getTaskMessages.queryOptions({
       input: { taskId: selectedTaskId ?? "" },
@@ -90,7 +90,7 @@ export function TaskPanelProvider({
     ...orpc.chat.getTaskChat.queryOptions({
       input: { taskId: selectedTaskId ?? "" },
     }),
-    enabled: !!selectedTaskId,
+    enabled: !!selectedTaskId && taskMessagesQuery.isSuccess,
     // Poll while looking for active stream
     refetchInterval: (query) => {
       // Stop polling once we have an activeStreamId or task is not in processing state
@@ -104,7 +104,9 @@ export function TaskPanelProvider({
     },
   });
 
-  const messages: UIMessage[] = taskMessagesQuery.data ?? [];
+  const chatId = taskChatQuery.data?.id ?? null;
+  const activeStreamId = taskChatQuery.data?.activeStreamId ?? null;
+  const initialMessages = taskMessagesQuery.data ?? [];
 
   // Invalidate tasks helper
   const invalidateTasks = useCallback(() => {
@@ -115,8 +117,8 @@ export function TaskPanelProvider({
     });
   }, [queryClient, projectId]);
 
-  // Handle stream complete
-  const handleStreamComplete = useCallback(() => {
+  // Invalidate task queries helper
+  const invalidateTaskQueries = useCallback(() => {
     invalidateTasks();
     if (selectedTaskId) {
       queryClient.invalidateQueries({
@@ -132,21 +134,65 @@ export function TaskPanelProvider({
     }
   }, [queryClient, selectedTaskId, invalidateTasks]);
 
-  // Chat stream hook for real-time streaming during processing
+  // Use useChat from ai-sdk for unified message management
   const {
-    messages: streamingMessages,
-    isStreaming,
-    abort: abortTaskStream,
-  } = useChatStream({
-    chatId: taskChatQuery.data?.id ?? null,
-    enabled:
-      !!selectedTaskId &&
-      !!taskChatQuery.data?.id &&
-      !!taskChatQuery.data?.activeStreamId &&
-      (selectedTask?.status === "processing" ||
-        selectedTask?.status === "todo"),
-    onComplete: handleStreamComplete,
+    messages,
+    sendMessage: chatSendMessage,
+    status,
+    resumeStream,
+    stop: _stop,
+  } = useChat({
+    id: chatId ?? undefined,
+    generateId: generateUUID,
+    transport: new DefaultChatTransport({
+      api: "/api/agent",
+      prepareSendMessagesRequest({ messages }) {
+        return {
+          body: {
+            type: "task",
+            taskId: selectedTaskId,
+            messages,
+          },
+        };
+      },
+      prepareReconnectToStreamRequest: chatId
+        ? ({ id }) => ({
+            api: `/api/agent/${id}/stream`,
+            credentials: "include",
+          })
+        : undefined,
+    }),
+    messages: initialMessages,
+    onFinish: () => {
+      invalidateTaskQueries();
+    },
+    onError: (error) => {
+      console.error("Chat stream error:", error);
+    },
   });
+
+  const isStreaming = status === "streaming";
+
+  // Resume stream when activeStreamId exists
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only resume when chat data changes
+  useEffect(() => {
+    if (activeStreamId && status === "ready") {
+      resumeStream();
+    }
+  }, [taskChatQuery.data]);
+
+  // Custom stop function that calls DELETE endpoint before built-in stop
+  const abortStream = useCallback(async () => {
+    if (!chatId) return;
+
+    await fetch(`/api/agent/${chatId}/stream`, {
+      method: "DELETE",
+    }).catch((error) => {
+      console.error("Failed to abort stream:", error);
+    });
+
+    await _stop();
+  }, [chatId, _stop]);
 
   // Select task action
   const selectTask = useCallback(
@@ -199,8 +245,7 @@ export function TaskPanelProvider({
           }).queryKey,
         });
 
-        // We don't need to consume the stream here - useChatStream will pick it up
-        // via the taskChatQuery polling for activeStreamId
+        // useChat will pick up the stream via resumeStream when activeStreamId is detected
       } catch (error) {
         console.error("Failed to start task:", error);
       } finally {
@@ -210,80 +255,22 @@ export function TaskPanelProvider({
     [selectedTaskId, invalidateTasks, queryClient],
   );
 
-  // Send message action
-  const sendMessageMutation = useMutation({
-    mutationFn: async (content: string) => {
-      if (!selectedTaskId) {
-        throw new Error("No task selected");
-      }
-
-      const userMessage: UIMessage = {
-        id: generateUUID(),
-        role: "user",
-        parts: [{ type: "text", text: content }],
-      };
-      // Get existing messages and add user message
-      const existingMessages = taskMessagesQuery.data ?? [];
-      const allMessages = [...existingMessages, userMessage];
-
-      // Send request and consume the stream to completion
-      const response = await fetch("/api/agent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "task",
-          taskId: selectedTaskId,
-          messages: allMessages,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      // Consume the stream to completion
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error("No response body");
-      }
-      while (true) {
-        const { done } = await reader.read();
-        if (done) break;
-      }
-    },
-    onSuccess: () => {
-      if (selectedTaskId) {
-        queryClient.invalidateQueries({
-          queryKey: orpc.chat.getTaskMessages.queryOptions({
-            input: { taskId: selectedTaskId },
-          }).queryKey,
-        });
-      }
-    },
-  });
-
+  // Send message action using useChat's sendMessage
   const sendMessage = useCallback(
-    async (content: string) => {
-      setIsLoading(true);
-      try {
-        await sendMessageMutation.mutateAsync(content);
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [sendMessageMutation],
-  );
+    (content: string) => {
+      if (!selectedTaskId) return;
 
-  // Abort stream action
-  const abortStream = useCallback(async () => {
-    await abortTaskStream();
-  }, [abortTaskStream]);
+      chatSendMessage({
+        parts: [{ type: "text", text: content }],
+      });
+    },
+    [selectedTaskId, chatSendMessage],
+  );
 
   const value: TaskPanelContextValue = {
     selectedTaskId,
     selectedTask,
     messages,
-    streamingMessages,
     isLoading,
     isStreaming,
     selectTask,

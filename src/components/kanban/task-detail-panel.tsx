@@ -1,8 +1,7 @@
 "use client";
 
-import type { UIMessage } from "ai";
 import { Loader2, Play, Square, User, X } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { ChatContainer } from "@/components/chat/chat-container";
 import { Button } from "@/components/ui/button";
@@ -20,7 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { type AgentType, useTaskPanel } from "@/hooks/use-task-panel";
-import { StatusBadge, type TaskStatus } from "./status-selector";
+import { StatusBadge } from "./status-selector";
 
 const AGENT_OPTIONS = [
   "developer",
@@ -36,33 +35,18 @@ interface TodoFormValues {
 }
 
 // TODO Status Content - Agent selection and description
-function TodoContent({
-  task,
-  isLoading,
-  onAssignAndStart,
-}: {
-  task: {
-    id: string;
-    title: string;
-    description?: string | null;
-    status: TaskStatus;
-    assignedAgent?: AgentType | null;
-    output?: string | null;
-    reviewComment?: string | null;
-  };
-  isLoading: boolean;
-  onAssignAndStart: (agentType: AgentType, description?: string) => void;
-}) {
+function TodoContent() {
+  const { selectedTask, isLoading, startTask } = useTaskPanel();
+
   const form = useForm<TodoFormValues>({
     defaultValues: {
       agentType: "developer",
-      description: task.description ?? "",
+      description: selectedTask?.description ?? "",
     },
   });
 
   const handleSubmit = (data: TodoFormValues) => {
-    console.log(data);
-    onAssignAndStart(data.agentType, data.description);
+    startTask(data.agentType, data.description);
   };
 
   return (
@@ -146,42 +130,18 @@ function TodoContent({
 }
 
 // Chat content for all non-todo statuses
-function ChatContent({
-  task,
-  messages,
-  streamingMessages,
-  isLoading,
-  isStreaming,
-  onSendMessage,
-  onAbort,
-}: {
-  task: {
-    id: string;
-    title: string;
-    description?: string | null;
-    status: TaskStatus;
-    assignedAgent?: AgentType | null;
-    output?: string | null;
-    reviewComment?: string | null;
-  };
-  messages: UIMessage[];
-  streamingMessages?: UIMessage[];
-  isLoading: boolean;
-  isStreaming?: boolean;
-  onSendMessage: (content: string) => void;
-  onAbort?: () => void;
-}) {
-  const agentLabel =
-    AGENT_OPTIONS.find((a) => a === task.assignedAgent) ?? "Agent";
+function ChatContent() {
+  const {
+    selectedTask,
+    messages,
+    isLoading,
+    isStreaming,
+    sendMessage,
+    abortStream,
+  } = useTaskPanel();
 
-  // Merge persisted messages with streaming messages
-  const allMessages = useMemo(() => {
-    if (!streamingMessages || streamingMessages.length === 0) {
-      return messages;
-    }
-    // Streaming messages replace the last assistant message or are appended
-    return [...messages, ...streamingMessages];
-  }, [messages, streamingMessages]);
+  const agentLabel =
+    AGENT_OPTIONS.find((a) => a === selectedTask?.assignedAgent) ?? "Agent";
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -195,11 +155,11 @@ function ChatContent({
             </span>
           )}
         </div>
-        {isStreaming && onAbort && (
+        {isStreaming && (
           <Button
             size="sm"
             variant="outline"
-            onClick={onAbort}
+            onClick={abortStream}
             className="text-destructive hover:bg-destructive/10"
           >
             <Square className="mr-1 size-3" />
@@ -210,8 +170,8 @@ function ChatContent({
 
       <div className="flex-1 overflow-hidden">
         <ChatContainer
-          messages={allMessages}
-          onSendMessage={onSendMessage}
+          messages={messages}
+          onSendMessage={sendMessage}
           isLoading={isLoading || isStreaming}
           placeholder="Chat with agent..."
         />
@@ -221,17 +181,7 @@ function ChatContent({
 }
 
 export function TaskDetailPanel() {
-  const {
-    selectedTask,
-    messages,
-    streamingMessages,
-    isLoading,
-    isStreaming,
-    closePanel,
-    sendMessage,
-    startTask,
-    abortStream,
-  } = useTaskPanel();
+  const { selectedTask, closePanel } = useTaskPanel();
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -244,33 +194,8 @@ export function TaskDetailPanel() {
   // Don't render if no task selected
   if (!selectedTask) return null;
 
-  const renderContent = () => {
-    if (selectedTask.status === "todo") {
-      return (
-        <TodoContent
-          task={selectedTask}
-          isLoading={isLoading}
-          onAssignAndStart={startTask}
-        />
-      );
-    }
-
-    // For all other statuses, show the chat history directly
-    return (
-      <ChatContent
-        task={selectedTask}
-        messages={messages}
-        streamingMessages={streamingMessages}
-        isLoading={isLoading}
-        isStreaming={isStreaming}
-        onSendMessage={sendMessage}
-        onAbort={abortStream}
-      />
-    );
-  };
-
   return (
-    <div className="flex h-full w-1/2 flex-shrink-0 flex-col border-l border-border bg-background animate-in slide-in-from-right duration-300">
+    <div className="flex h-full w-full flex-col border-l border-border bg-background">
       <div className="flex items-start justify-between border-b border-border p-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -294,7 +219,7 @@ export function TaskDetailPanel() {
           <X className="size-4" />
         </Button>
       </div>
-      {renderContent()}
+      {selectedTask.status === "todo" ? <TodoContent /> : <ChatContent />}
     </div>
   );
 }
